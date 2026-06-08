@@ -1,0 +1,13 @@
+[package]
+name = "integration-aggressor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+ratatui = "0.29"
+crossterm = { version = "0.27", features = ["event-stream"] }
+sysinfo = "0.30"
+walkdir = "2"
+palc = "0.0.2"
+chrono = "0.4"
