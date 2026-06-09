@@ -25,7 +25,11 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build build-essential python3 lldb
+        sudo apt-get install -y cmake ninja-build build-essential python3 wget
+        # Install LLVM 19
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        sudo ./llvm.sh 19 all
 
     - name: Checkout LLVM Project
       uses: actions/checkout@v4
@@ -36,10 +40,10 @@ jobs:
 
     - name: Configure LLVM Libc
       run: |
-        cmake -S llvm-project/llvm -B llvm-build -G Ninja \
+        CC=clang-19 CXX=clang++-19 cmake -S llvm-project/llvm -B llvm-build -G Ninja \
           -DLLVM_ENABLE_PROJECTS="libc" \
           -DLLVM_LIBC_FULL_BUILD=ON \
-          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
           -DLLVM_ENABLE_ASSERTIONS=ON
 
     - name: Build LLVM Libc Integration Tests
@@ -55,7 +59,7 @@ jobs:
         # Run for 1 hour (3600 seconds)
         # We don't specify workers to allow auto-detection
         # Reports will be saved in 'reports' directory
-        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/libc/test/integration
+        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/libc/test/integration --lldb-path lldb-19
 
     - name: Upload Reports on Failure
       if: failure()
