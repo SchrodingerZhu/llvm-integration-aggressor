@@ -10,9 +10,6 @@ on:
 jobs:
   stress-test:
     runs-on: ${{ matrix.os }}
-    container:
-      image: ${{ (matrix.os == 'ubuntu-24.04-arm' && 'ghcr.io/llvm/arm64v8/libc-ubuntu-24.04') || 'ghcr.io/llvm/libc-ubuntu-24.04'}}
-      options: --privileged
     strategy:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm]
@@ -25,11 +22,16 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Install Extra Dependencies
+    - name: Install Dependencies
       run: |
-        apt-get update
-        # Install lldb matching the clang version in the container (likely 23 or 22)
-        apt-get install -y lldb-23 || apt-get install -y lldb-22 || apt-get install -y lldb || true
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build build-essential python3 wget
+        # Install LLVM 22
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        sudo ./llvm.sh 22 all
+        # Create symlink for asm headers (Debian/Ubuntu multiarch workaround)
+        sudo ln -sf /usr/include/$(uname -m)-linux-gnu/asm /usr/include/asm
 
     - name: Checkout LLVM Project
       uses: actions/checkout@v4
@@ -40,13 +42,7 @@ jobs:
 
     - name: Configure LLVM Libc
       run: |
-        # Detect available clang version
-        CLANG_VER=$(which clang-23 || which clang-22 || which clang)
-        CLANGXX_VER=$(which clang++-23 || which clang++-22 || which clang++)
-        echo "Using C compiler: $CLANG_VER"
-        echo "Using C++ compiler: $CLANGXX_VER"
-
-        CC=$CLANG_VER CXX=$CLANGXX_VER cmake -S llvm-project/llvm -B llvm-build -G Ninja \
+        CC=clang-22 CXX=clang++-22 cmake -S llvm-project/llvm -B llvm-build -G Ninja \
           -DLLVM_ENABLE_PROJECTS="libc" \
           -DLLVM_LIBC_FULL_BUILD=ON \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -62,11 +58,7 @@ jobs:
 
     - name: Run Stress Test (1 Hour)
       run: |
-        # Detect available lldb version
-        LLDB_PATH=$(which lldb-23 || which lldb-22 || which lldb)
-        echo "Using LLDB: $LLDB_PATH"
-
-        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/libc/test/integration --lldb-path $LLDB_PATH
+        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/libc/test/integration --lldb-path lldb-22
 
     - name: Upload Reports on Failure
       if: failure()
