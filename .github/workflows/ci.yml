@@ -42,11 +42,14 @@ jobs:
 
     - name: Configure LLVM Libc
       run: |
-        CC=clang-22 CXX=clang++-22 cmake -S llvm-project/llvm -B llvm-build -G Ninja \
-          -DLLVM_ENABLE_PROJECTS="libc" \
+        cmake -S llvm-project/runtimes -B llvm-build -G Ninja \
+          -DLLVM_ENABLE_RUNTIMES="libc" \
           -DLLVM_LIBC_FULL_BUILD=ON \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-          -DLLVM_ENABLE_ASSERTIONS=ON
+          -DLLVM_ENABLE_ASSERTIONS=ON \
+          -DCMAKE_C_COMPILER=clang-22 \
+          -DCMAKE_CXX_COMPILER=clang++-22 \
+          -DCMAKE_ASM_COMPILER=clang-22
 
     - name: Build LLVM Libc Integration Tests
       run: |
@@ -58,7 +61,7 @@ jobs:
 
     - name: Run Stress Test (1 Hour)
       run: |
-        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/projects/libc/test/integration --lldb-path lldb-22
+        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/libc/test/integration --lldb-path lldb-22
 
     - name: Upload Reports on Failure
       if: failure()
