@@ -161,12 +161,46 @@ impl App {
 
     pub fn log(&mut self, msg: String) {
         let timestamp = chrono::Local::now().format("%H:%M:%S");
-        self.event_logs.push(format!("[{}] {}", timestamp, msg));
+        let formatted = format!("[{}] {}", timestamp, msg);
+        if self.args.no_tui {
+            println!("{}", formatted);
+        }
+        self.event_logs.push(formatted);
         if self.event_logs.len() > 1000 {
             self.event_logs.remove(0);
         }
         self.log_list_state
             .select(Some(self.event_logs.len().saturating_sub(1)));
+    }
+
+    pub fn print_status(&self) {
+        let elapsed = self.start_time.elapsed();
+        let elapsed_str = format!(
+            "{:02}:{:02}:{:02}",
+            elapsed.as_secs() / 3600,
+            (elapsed.as_secs() % 3600) / 60,
+            elapsed.as_secs() % 60
+        );
+        println!("--- Status Update [{}] ---", elapsed_str);
+        println!(
+            "Attempts: {}, Failures: {}, Hangs: {}",
+            self.total_attempts, self.total_failures, self.total_hangs
+        );
+        let mut running_workers = 0;
+        let mut isolating_workers = 0;
+        let mut idle_workers = 0;
+        for w in &self.workers {
+            match w.status {
+                WorkerStatus::Idle => idle_workers += 1,
+                WorkerStatus::Running { .. } => running_workers += 1,
+                WorkerStatus::Isolating { .. } => isolating_workers += 1,
+            }
+        }
+        println!(
+            "Workers: {} running, {} isolating, {} idle (total {})",
+            running_workers, isolating_workers, idle_workers, self.workers.len()
+        );
+        println!("--------------------------");
     }
 
     pub fn get_next_job(&mut self) -> String {

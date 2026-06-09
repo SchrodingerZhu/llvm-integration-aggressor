@@ -31,4 +31,8 @@ pub struct Args {
     /// Path to LLDB binary
     #[arg(long, default_value = "lldb")]
     pub lldb_path: String,
+
+    /// Run without TUI, printing logs to stdout
+    #[arg(long)]
+    pub no_tui: bool,
 }

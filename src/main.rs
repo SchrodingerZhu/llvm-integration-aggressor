@@ -73,8 +73,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx_event, mut rx_event) = mpsc::channel(100);
 
-    // Initialize TUI terminal
-    let mut terminal = ratatui::init();
+    // Initialize TUI terminal if not in no-tui mode
+    let no_tui = args.no_tui;
+    let mut terminal = if !no_tui {
+        Some(ratatui::init())
+    } else {
+        None
+    };
 
     let mut app = App::new(args, test_binaries, tx_event.clone());
     app.log(format!(
@@ -83,19 +88,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     app.log(format!("Spawning {} workers...", app.workers.len()));
 
-    // Input listening thread
-    let tx_event_key = tx_event.clone();
-    tokio::task::spawn_blocking(move || {
-        loop {
-            if crossterm::event::poll(Duration::from_millis(50)).unwrap()
-                && let Ok(Event::Key(key)) = crossterm::event::read()
-                && key.kind == KeyEventKind::Press
-                && tx_event_key.blocking_send(AppEvent::Key(key)).is_err()
-            {
-                break;
+    // Input listening thread (only if TUI is enabled)
+    if !no_tui {
+        let tx_event_key = tx_event.clone();
+        tokio::task::spawn_blocking(move || {
+            loop {
+                if crossterm::event::poll(Duration::from_millis(50)).unwrap()
+                    && let Ok(Event::Key(key)) = crossterm::event::read()
+                    && key.kind == KeyEventKind::Press
+                    && tx_event_key.blocking_send(AppEvent::Key(key)).is_err()
+                {
+                    break;
+                }
             }
-        }
-    });
+        });
+    }
 
     // Tick sender loop
     let tx_event_tick = tx_event.clone();
@@ -111,20 +118,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     app.schedule_jobs();
 
+    let mut last_status_print = std::time::Instant::now();
+    let status_print_interval = Duration::from_secs(30);
+
     loop {
         if let Some(event) = rx_event.recv().await {
             match event {
-                AppEvent::Key(key) => match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Up => app.scroll_table(-1),
-                    KeyCode::Down => app.scroll_table(1),
-                    KeyCode::PageUp => app.scroll_logs(-5),
-                    KeyCode::PageDown => app.scroll_logs(5),
-                    _ => {}
-                },
+                AppEvent::Key(key) => {
+                    if !no_tui {
+                        match key.code {
+                            KeyCode::Char('q') => break,
+                            KeyCode::Up => app.scroll_table(-1),
+                            KeyCode::Down => app.scroll_table(1),
+                            KeyCode::PageUp => app.scroll_logs(-5),
+                            KeyCode::PageDown => app.scroll_logs(5),
+                            _ => {}
+                        }
+                    }
+                }
                 AppEvent::Tick => {
                     app.refresh_sysinfo();
                     app.schedule_jobs();
+
+                    if no_tui && last_status_print.elapsed() >= status_print_interval {
+                        app.print_status();
+                        last_status_print = std::time::Instant::now();
+                    }
 
                     // Check for overall runtime timeout
                     if let Some(limit) = app.args.duration
@@ -134,6 +153,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let all_idle = app.workers.iter().all(|w| w.status == WorkerStatus::Idle);
                         if all_idle {
                             app.log("Stress test duration reached. All workers idle. Exiting successfully.".to_string());
+                            if no_tui {
+                                app.print_status();
+                            }
                             break;
                         }
                     }
@@ -173,6 +195,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     core_path,
                 } => {
                     app.handle_worker_confirmed_hang(worker_id, backtrace, core_path);
+                    if no_tui {
+                        app.print_status();
+                    }
                     break;
                 }
                 AppEvent::WorkerAborted { worker_id } => {
@@ -184,9 +209,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        app.draw(&mut terminal)?;
+        if let Some(ref mut term) = terminal {
+            app.draw(term)?;
+        }
     }
 
-    ratatui::restore();
+    if terminal.is_some() {
+        ratatui::restore();
+    }
     Ok(())
 }

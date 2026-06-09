@@ -1,0 +1,65 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * *' # Daily at midnight UTC
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  stress-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+      fail-fast: false
+
+    steps:
+    - name: Checkout integration-aggressor
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build build-essential python3 lldb
+
+    - name: Checkout LLVM Project
+      uses: actions/checkout@v4
+      with:
+        repository: llvm/llvm-project
+        path: llvm-project
+        fetch-depth: 1
+
+    - name: Configure LLVM Libc
+      run: |
+        cmake -S llvm-project/llvm -B llvm-build -G Ninja \
+          -DLLVM_ENABLE_PROJECTS="libc" \
+          -DLLVM_LIBC_FULL_BUILD=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DLLVM_ENABLE_ASSERTIONS=ON
+
+    - name: Build LLVM Libc Integration Tests
+      run: |
+        ninja -C llvm-build libc-integration-tests
+
+    - name: Build Integration Aggressor
+      run: |
+        cargo build --release
+
+    - name: Run Stress Test (1 Hour)
+      run: |
+        # Run for 1 hour (3600 seconds)
+        # We don't specify workers to allow auto-detection
+        # Reports will be saved in 'reports' directory
+        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/libc/test/integration
+
+    - name: Upload Reports on Failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stress-test-reports-${{ matrix.os }}
+        path: reports/
