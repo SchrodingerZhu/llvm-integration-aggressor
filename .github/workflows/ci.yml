@@ -58,7 +58,7 @@ jobs:
 
     - name: Run Stress Test (1 Hour)
       run: |
-        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/libc/test/integration --lldb-path lldb-22
+        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/projects/libc/test/integration --lldb-path lldb-22
 
     - name: Upload Reports on Failure
       if: failure()
