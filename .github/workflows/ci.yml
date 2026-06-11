@@ -3,9 +3,14 @@ name: Continuous Integration
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   schedule:
     - cron: '0 0 * * *' # Daily at midnight UTC
   workflow_dispatch: # Allow manual trigger
+
+env:
+  TEST_DURATION: ${{ github.event_name == 'pull_request' && 300 || 7200 }}
 
 jobs:
   stress-test:
@@ -59,9 +64,9 @@ jobs:
       run: |
         cargo build --release
 
-    - name: Run Stress Test (1 Hour)
+    - name: Run Stress Test
       run: |
-        ./target/release/integration-aggressor --no-tui --duration 3600 --test-dir llvm-build/libc/test/integration --lldb-path lldb-22
+        ./target/release/integration-aggressor --no-tui --duration ${{ env.TEST_DURATION }} --test-dir llvm-build/libc/test/integration --lldb-path lldb-22
 
     - name: Upload Reports on Failure
       if: failure()
@@ -69,3 +74,65 @@ jobs:
       with:
         name: stress-test-reports-${{ matrix.os }}
         path: reports/
+
+  build:
+    runs-on: ubuntu-24.04-riscv
+    steps:
+    - name: Checkout integration-aggressor
+      uses: actions/checkout@v4
+
+    - name: Check architecture
+      run: uname -m
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build build-essential python3 wget
+
+    - name: Install LLVM (RISC-V)
+      run: |
+        wget https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2026.06.06/riscv64-glibc-ubuntu-24.04-llvm.tar.xz
+        mkdir llvm-riscv
+        tar -xf riscv64-glibc-ubuntu-24.04-llvm.tar.xz -C llvm-riscv --strip-components=1
+
+    - name: Checkout LLVM Project
+      uses: actions/checkout@v4
+      with:
+        repository: llvm/llvm-project
+        path: llvm-project
+        fetch-depth: 1
+
+    - name: Configure LLVM Libc
+      run: |
+        cmake -S llvm-project/runtimes -B llvm-build -G Ninja \
+          -DLLVM_ENABLE_RUNTIMES="libc" \
+          -DLLVM_LIBC_FULL_BUILD=ON \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DLLVM_ENABLE_ASSERTIONS=ON \
+          -DCMAKE_C_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang \
+          -DCMAKE_CXX_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang++ \
+          -DCMAKE_ASM_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang
+
+    - name: Build LLVM Libc Integration Tests
+      run: |
+        export PATH=${{ github.workspace }}/llvm-riscv/bin:$PATH
+        ninja -C llvm-build libc-integration-tests
+
+    - name: Build Integration Aggressor
+      run: |
+        cargo build --release
+
+    - name: Run Stress Test
+      run: |
+        ./target/release/integration-aggressor --no-tui --duration ${{ env.TEST_DURATION }} --test-dir llvm-build/libc/test/integration --lldb-path ${{ github.workspace }}/llvm-riscv/bin/lldb
+
+    - name: Upload Reports on Failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stress-test-reports-riscv
+        path: reports/
+
