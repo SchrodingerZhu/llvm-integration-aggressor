@@ -14,7 +14,7 @@ env:
 
 jobs:
   cross-build:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04
     steps:
     - name: Checkout integration-aggressor
       uses: actions/checkout@v4
@@ -27,11 +27,13 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build build-essential python3 wget gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
-        # Install LLVM 22 (on arm64 host)
-        wget https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 22 all
+        sudo apt-get install -y cmake ninja-build build-essential python3 wget
+
+    - name: Install LLVM (RISC-V Cross Toolchain)
+      run: |
+        wget https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2026.06.05/riscv64-glibc-ubuntu-24.04-llvm.tar.xz
+        mkdir llvm-riscv
+        tar -xf riscv64-glibc-ubuntu-24.04-llvm.tar.xz -C llvm-riscv --strip-components=1
 
     - name: Checkout LLVM Project
       uses: actions/checkout@v4
@@ -47,13 +49,13 @@ jobs:
           -DLLVM_LIBC_FULL_BUILD=ON \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo \
           -DLLVM_ENABLE_ASSERTIONS=ON \
-          -DCMAKE_C_COMPILER=clang-22 \
-          -DCMAKE_CXX_COMPILER=clang++-22 \
-          -DCMAKE_ASM_COMPILER=clang-22 \
-          -DCMAKE_C_COMPILER_TARGET=riscv64-linux-gnu \
-          -DCMAKE_CXX_COMPILER_TARGET=riscv64-linux-gnu \
-          -DCMAKE_ASM_COMPILER_TARGET=riscv64-linux-gnu \
-          -DCMAKE_SYSROOT=/usr/riscv64-linux-gnu
+          -DCMAKE_C_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang \
+          -DCMAKE_CXX_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang++ \
+          -DCMAKE_ASM_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang \
+          -DCMAKE_C_COMPILER_TARGET=riscv64-unknown-linux-gnu \
+          -DCMAKE_CXX_COMPILER_TARGET=riscv64-unknown-linux-gnu \
+          -DCMAKE_ASM_COMPILER_TARGET=riscv64-unknown-linux-gnu \
+          -DCMAKE_SYSROOT=${{ github.workspace }}/llvm-riscv/sysroot
 
     - name: Build LLVM Libc Integration Tests
       run: |
@@ -61,7 +63,7 @@ jobs:
 
     - name: Build Integration Aggressor (Cross-Compile for RISC-V)
       env:
-        CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
+        CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: ${{ github.workspace }}/llvm-riscv/bin/riscv64-unknown-linux-gnu-gcc
       run: |
         cargo build --release --target riscv64gc-unknown-linux-gnu
 
