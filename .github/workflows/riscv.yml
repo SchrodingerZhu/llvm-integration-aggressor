@@ -1,0 +1,173 @@
+name: RISC-V Integration Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * *' # Daily at midnight UTC
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  TEST_DURATION: ${{ github.event_name == 'pull_request' && 300 || 7200 }}
+  QEMU_LD_PREFIX: ${{ github.workspace }}/llvm-riscv/sysroot
+
+jobs:
+  cross-build:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout integration-aggressor
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: riscv64gc-unknown-linux-gnu
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build build-essential python3 wget qemu-user qemu-user-static binfmt-support
+
+    - name: Install LLVM (RISC-V Cross Toolchain)
+      run: |
+        wget https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2026.06.05/riscv64-glibc-ubuntu-24.04-llvm.tar.xz
+        mkdir llvm-riscv
+        tar -xf riscv64-glibc-ubuntu-24.04-llvm.tar.xz -C llvm-riscv --strip-components=1
+
+    - name: Checkout LLVM Project
+      uses: actions/checkout@v4
+      with:
+        repository: llvm/llvm-project
+        path: llvm-project
+        fetch-depth: 1
+
+    - name: Patch LLVM Libc Test Framework for Core Dumps
+      run: |
+        sed -i 's/LIBC_NAMESPACE::internal::exit(127)/__builtin_trap()/g' llvm-project/libc/test/IntegrationTest/test.h
+
+    - name: Configure LLVM Libc (Cross-Compile for RISC-V)
+      run: |
+        cmake -S llvm-project/runtimes -B llvm-build -G Ninja \
+          -DLLVM_ENABLE_RUNTIMES="libc" \
+          -DLLVM_LIBC_FULL_BUILD=ON \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DLLVM_ENABLE_ASSERTIONS=ON \
+          -DCMAKE_C_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang \
+          -DCMAKE_CXX_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang++ \
+          -DCMAKE_ASM_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang \
+          -DCMAKE_C_COMPILER_TARGET=riscv64-unknown-linux-gnu \
+          -DCMAKE_CXX_COMPILER_TARGET=riscv64-unknown-linux-gnu \
+          -DCMAKE_ASM_COMPILER_TARGET=riscv64-unknown-linux-gnu \
+          -DCMAKE_SYSROOT=${{ github.workspace }}/llvm-riscv/sysroot \
+          -DLIBC_KERNEL_HEADERS=${{ github.workspace }}/llvm-riscv/sysroot/usr/include \
+          -DLLVM_ENABLE_LLD=ON \
+          -DCMAKE_CROSSCOMPILING_EMULATOR=qemu-riscv64
+
+    - name: Build LLVM Libc Integration Tests
+      run: |
+        ninja -C llvm-build libc-integration-tests
+
+    - name: Build Integration Aggressor (Cross-Compile for RISC-V)
+      env:
+        CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: ${{ github.workspace }}/llvm-riscv/bin/riscv64-unknown-linux-gnu-gcc
+      run: |
+        cargo build --release --target riscv64gc-unknown-linux-gnu
+
+    - name: Package Artifacts
+      run: |
+        mkdir -p dist
+        cp target/riscv64gc-unknown-linux-gnu/release/integration-aggressor dist/
+        cp -r llvm-build/libc/test/integration dist/tests
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: riscv-binaries
+        path: dist/
+
+  run-tests:
+    needs: cross-build
+    runs-on: ubuntu-24.04-riscv
+    steps:
+    - name: Install Dependencies
+      run: |
+        if command -v lldb >/dev/null 2>&1; then
+          echo "lldb is already installed"
+          lldb --version
+        else
+          echo "lldb is not installed, attempting to install..."
+          sudo apt-get update
+          sudo apt-get install -y lldb-19 || sudo apt-get install -y lldb-18 || sudo apt-get install -y lldb || {
+            echo "Failed to install lldb from default repos, trying apt.llvm.org..."
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh 19
+          }
+          if [ -f /usr/bin/lldb-19 ]; then
+            sudo ln -sf /usr/bin/lldb-19 /usr/bin/lldb
+          elif [ -f /usr/bin/lldb-18 ]; then
+            sudo ln -sf /usr/bin/lldb-18 /usr/bin/lldb
+          fi
+        fi
+        sudo apt-get install -y file
+
+    - name: Download Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: riscv-binaries
+        path: dist
+
+    - name: Make binary executable
+      run: |
+        chmod +x dist/integration-aggressor
+        find dist/tests -type f -name "*.__build__" -exec chmod +x {} +
+
+    - name: Enable Core Dumps
+      run: |
+        mkdir -p reports
+        sudo sysctl -w kernel.core_pattern="${{ github.workspace }}/reports/core_%e_%p"
+
+    - name: Run Stress Test
+      run: |
+        ulimit -c unlimited
+        ./dist/integration-aggressor --no-tui --duration ${{ env.TEST_DURATION }} --test-dir dist/tests --lldb-path lldb
+
+    - name: Post-mortem Debug
+      if: always()
+      run: |
+        if [ -d reports ]; then
+          for core in reports/core_*; do
+            if [ -f "$core" ]; then
+              echo "================================================================================"
+              echo "Found core dump: $core"
+              execfn=$(file "$core" | awk -F"execfn: '" '{print $2}' | awk -F"'" '{print $1}')
+              echo "Executable: $execfn"
+              if [ -f "$execfn" ]; then
+                echo "--- Backtrace ---"
+                lldb "$execfn" -c "$core" --batch -o "thread backtrace all"
+              else
+                binary_name=$(basename "$execfn")
+                echo "Executable not found at $execfn, searching for $binary_name under dist/tests..."
+                found_bin=$(find dist/tests -type f -name "$binary_name" | head -n 1)
+                if [ -n "$found_bin" ]; then
+                  echo "Found executable at: $found_bin"
+                  echo "--- Backtrace ---"
+                  lldb "$found_bin" -c "$core" --batch -o "thread backtrace all"
+                else
+                  echo "Could not find executable for $core"
+                fi
+              fi
+              echo "================================================================================"
+            fi
+          done
+        fi
+
+    - name: Upload Reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stress-test-reports-riscv
+        path: reports/
+        if-no-files-found: ignore
