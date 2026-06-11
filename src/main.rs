@@ -218,10 +218,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ratatui::restore();
     }
 
-    if app.stats.failures > 0 || app.stats.hangs > 0 {
+    if app.total_failures > 0 || app.total_hangs > 0 {
         eprintln!(
             "Stress test failed: {} failures, {} hangs detected.",
-            app.stats.failures, app.stats.hangs
+            app.total_failures, app.total_hangs
         );
         std::process::exit(1);
     }
