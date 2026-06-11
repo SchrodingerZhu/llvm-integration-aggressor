@@ -161,7 +161,7 @@ public:
     static constexpr int PENDING_READER_BIT = 1 << PENDING_READER_SHIFT;
     static constexpr int PENDING_WRITER_BIT = 1 << PENDING_WRITER_SHIFT;
     static constexpr int ACTIVE_READER_COUNT_UNIT = 1 << ACTIVE_READER_SHIFT;
-    static constexpr int ACTIVE_WRITER_BIT = static_cast<int>(1u << ACTIVE_WRITER_SHIFT);
+    static constexpr int ACTIVE_WRITER_BIT = 1 << ACTIVE_WRITER_SHIFT;
     static constexpr int PENDING_MASK = PENDING_READER_BIT | PENDING_WRITER_BIT;
 
     constexpr RwState(int state = 0) : state(state) {}
