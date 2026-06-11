@@ -115,7 +115,9 @@ jobs:
         path: dist
 
     - name: Make binary executable
-      run: chmod +x dist/integration-aggressor
+      run: |
+        chmod +x dist/integration-aggressor
+        find dist/tests -type f -name "*.__build__" -exec chmod +x {} +
 
     - name: Run Stress Test
       run: |
