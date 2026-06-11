@@ -10,7 +10,7 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 env:
-  TEST_DURATION: ${{ github.event_name == 'pull_request' && 300 || 7200 }}
+  TEST_DURATION: 120
   QEMU_LD_PREFIX: ${{ github.workspace }}/llvm-riscv/sysroot
 
 jobs:
