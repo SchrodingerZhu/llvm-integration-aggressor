@@ -42,6 +42,11 @@ jobs:
         echo "=== Location of mman.h ==="
         find ${{ github.workspace }}/llvm-riscv -name mman.h
 
+    - name: Debug Compiler Search Paths
+      run: |
+        echo '#include <linux/mman.h>' > test.c
+        ${{ github.workspace }}/llvm-riscv/bin/clang --target=riscv64-unknown-linux-gnu --sysroot=${{ github.workspace }}/llvm-riscv/sysroot -idirafter/usr/include -c test.c -o test.o -v -H
+
     - name: Checkout LLVM Project
       uses: actions/checkout@v4
       with:
@@ -51,7 +56,6 @@ jobs:
 
     - name: Configure LLVM Libc (Cross-Compile for RISC-V)
       run: |
-        # Using riscv64-unknown-linux-gnu as sysroot first, we will verify with debug step if it fails
         cmake -S llvm-project/runtimes -B llvm-build -G Ninja \
           -DLLVM_ENABLE_RUNTIMES="libc" \
           -DLLVM_LIBC_FULL_BUILD=ON \
@@ -63,7 +67,7 @@ jobs:
           -DCMAKE_C_COMPILER_TARGET=riscv64-unknown-linux-gnu \
           -DCMAKE_CXX_COMPILER_TARGET=riscv64-unknown-linux-gnu \
           -DCMAKE_ASM_COMPILER_TARGET=riscv64-unknown-linux-gnu \
-          -DCMAKE_SYSROOT=${{ github.workspace }}/llvm-riscv/riscv64-unknown-linux-gnu
+          -DCMAKE_SYSROOT=${{ github.workspace }}/llvm-riscv/sysroot
 
     - name: Build LLVM Libc Integration Tests
       run: |
