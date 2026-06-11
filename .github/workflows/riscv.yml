@@ -123,9 +123,10 @@ jobs:
       run: |
         ./dist/integration-aggressor --no-tui --duration ${{ env.TEST_DURATION }} --test-dir dist/tests --lldb-path lldb
 
-    - name: Upload Reports on Failure
-      if: failure()
+    - name: Upload Reports
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: stress-test-reports-riscv
         path: reports/
+        if-no-files-found: ignore
