@@ -90,7 +90,10 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y lldb
+        sudo apt-get install -y lldb-18 || sudo apt-get install -y lldb
+        if [ -f /usr/bin/lldb-18 ]; then
+          sudo ln -sf /usr/bin/lldb-18 /usr/bin/lldb
+        fi
 
     - name: Download Artifacts
       uses: actions/download-artifact@v4
