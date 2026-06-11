@@ -89,10 +89,21 @@ jobs:
     steps:
     - name: Install Dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y lldb-18 || sudo apt-get install -y lldb
-        if [ -f /usr/bin/lldb-18 ]; then
-          sudo ln -sf /usr/bin/lldb-18 /usr/bin/lldb
+        if command -v lldb >/dev/null 2>&1; then
+          echo "lldb is already installed"
+          lldb --version
+        else
+          echo "lldb is not installed, attempting to install..."
+          sudo apt-get update
+          sudo apt-get install -y lldb-18 || sudo apt-get install -y lldb || {
+            echo "Failed to install lldb from default repos, trying apt.llvm.org..."
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh 18
+            if [ -f /usr/bin/lldb-18 ]; then
+              sudo ln -sf /usr/bin/lldb-18 /usr/bin/lldb
+            fi
+          }
         fi
 
     - name: Download Artifacts
