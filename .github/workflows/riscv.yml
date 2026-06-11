@@ -75,6 +75,11 @@ jobs:
       run: |
         cargo build --release --target riscv64gc-unknown-linux-gnu
 
+    - name: Build Reproducer
+      run: |
+        mkdir -p dist
+        ${{ github.workspace }}/llvm-riscv/bin/clang++ --target=riscv64-unknown-linux-gnu --sysroot=${{ github.workspace }}/llvm-riscv/sysroot -O3 -g -pthread reproducer.cpp -o dist/reproducer
+
     - name: Package Artifacts
       run: |
         mkdir -p dist
@@ -122,6 +127,7 @@ jobs:
     - name: Make binary executable
       run: |
         chmod +x dist/integration-aggressor
+        chmod +x dist/reproducer
         find dist/tests -type f -name "*.__build__" -exec chmod +x {} +
 
     - name: Enable Core Dumps
@@ -132,7 +138,18 @@ jobs:
     - name: Run Stress Test
       run: |
         ulimit -c unlimited
-        ./dist/integration-aggressor --no-tui --duration ${{ env.TEST_DURATION }} --test-dir dist/tests --lldb-path lldb
+        for i in {1..50}; do
+          echo "Iteration $i"
+          timeout -s ABRT 15s ./dist/reproducer || {
+            ret=$?
+            if [ $ret -eq 134 ] || [ $ret -eq 6 ]; then
+              echo "Reproducer hung or aborted!"
+            else
+              echo "Reproducer failed with exit code $ret"
+            fi
+            exit 1
+          }
+        done
 
     - name: Post-mortem Debug
       if: always()
