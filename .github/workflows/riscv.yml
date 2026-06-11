@@ -87,6 +87,12 @@ jobs:
     needs: cross-build
     runs-on: ubuntu-24.04-riscv
     steps:
+    - name: Debug Apt Packages
+      run: |
+        sudo apt-get update
+        apt-cache search lldb
+        exit 1
+
     - name: Install Dependencies
       run: |
         if command -v lldb >/dev/null 2>&1; then
