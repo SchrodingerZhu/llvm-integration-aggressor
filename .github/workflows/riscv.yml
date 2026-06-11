@@ -1,0 +1,107 @@
+name: RISC-V Integration Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * *' # Daily at midnight UTC
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  TEST_DURATION: ${{ github.event_name == 'pull_request' && 300 || 7200 }}
+
+jobs:
+  cross-build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+    - name: Checkout integration-aggressor
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: riscv64gc-unknown-linux-gnu
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build build-essential python3 wget gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
+        # Install LLVM 22 (on arm64 host)
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        sudo ./llvm.sh 22 all
+
+    - name: Checkout LLVM Project
+      uses: actions/checkout@v4
+      with:
+        repository: llvm/llvm-project
+        path: llvm-project
+        fetch-depth: 1
+
+    - name: Configure LLVM Libc (Cross-Compile for RISC-V)
+      run: |
+        cmake -S llvm-project/runtimes -B llvm-build -G Ninja \
+          -DLLVM_ENABLE_RUNTIMES="libc" \
+          -DLLVM_LIBC_FULL_BUILD=ON \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DLLVM_ENABLE_ASSERTIONS=ON \
+          -DCMAKE_C_COMPILER=clang-22 \
+          -DCMAKE_CXX_COMPILER=clang++-22 \
+          -DCMAKE_ASM_COMPILER=clang-22 \
+          -DCMAKE_C_COMPILER_TARGET=riscv64-linux-gnu \
+          -DCMAKE_CXX_COMPILER_TARGET=riscv64-linux-gnu \
+          -DCMAKE_ASM_COMPILER_TARGET=riscv64-linux-gnu \
+          -DCMAKE_SYSROOT=/usr/riscv64-linux-gnu
+
+    - name: Build LLVM Libc Integration Tests
+      run: |
+        ninja -C llvm-build libc-integration-tests
+
+    - name: Build Integration Aggressor (Cross-Compile for RISC-V)
+      env:
+        CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
+      run: |
+        cargo build --release --target riscv64gc-unknown-linux-gnu
+
+    - name: Package Artifacts
+      run: |
+        mkdir -p dist
+        cp target/riscv64gc-unknown-linux-gnu/release/integration-aggressor dist/
+        cp -r llvm-build/libc/test/integration dist/tests
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: riscv-binaries
+        path: dist/
+
+  run-tests:
+    needs: cross-build
+    runs-on: ubuntu-24.04-riscv
+    steps:
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y lldb
+
+    - name: Download Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: riscv-binaries
+        path: dist
+
+    - name: Make binary executable
+      run: chmod +x dist/integration-aggressor
+
+    - name: Run Stress Test
+      run: |
+        ./dist/integration-aggressor --no-tui --duration ${{ env.TEST_DURATION }} --test-dir dist/tests --lldb-path lldb
+
+    - name: Upload Reports on Failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: stress-test-reports-riscv
+        path: reports/
