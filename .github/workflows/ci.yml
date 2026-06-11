@@ -90,13 +90,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build build-essential python3 wget
-
-    - name: Install LLVM (RISC-V)
-      run: |
-        wget https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2026.06.06/riscv64-glibc-ubuntu-24.04-llvm.tar.xz
-        mkdir llvm-riscv
-        tar -xf riscv64-glibc-ubuntu-24.04-llvm.tar.xz -C llvm-riscv --strip-components=1
+        sudo apt-get install -y cmake ninja-build build-essential python3 wget clang lldb lld
 
     - name: Checkout LLVM Project
       uses: actions/checkout@v4
@@ -112,13 +106,12 @@ jobs:
           -DLLVM_LIBC_FULL_BUILD=ON \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo \
           -DLLVM_ENABLE_ASSERTIONS=ON \
-          -DCMAKE_C_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang \
-          -DCMAKE_CXX_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang++ \
-          -DCMAKE_ASM_COMPILER=${{ github.workspace }}/llvm-riscv/bin/clang
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_ASM_COMPILER=clang
 
     - name: Build LLVM Libc Integration Tests
       run: |
-        export PATH=${{ github.workspace }}/llvm-riscv/bin:$PATH
         ninja -C llvm-build libc-integration-tests
 
     - name: Build Integration Aggressor
@@ -127,7 +120,7 @@ jobs:
 
     - name: Run Stress Test
       run: |
-        ./target/release/integration-aggressor --no-tui --duration ${{ env.TEST_DURATION }} --test-dir llvm-build/libc/test/integration --lldb-path ${{ github.workspace }}/llvm-riscv/bin/lldb
+        ./target/release/integration-aggressor --no-tui --duration ${{ env.TEST_DURATION }} --test-dir llvm-build/libc/test/integration --lldb-path lldb
 
     - name: Upload Reports on Failure
       if: failure()
