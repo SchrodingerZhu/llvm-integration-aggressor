@@ -47,6 +47,10 @@ jobs:
       run: |
         sed -i 's/LIBC_NAMESPACE::internal::exit(127)/__builtin_trap()/g' llvm-project/libc/test/IntegrationTest/test.h
 
+    - name: Patch LLVM Libc raw_rwlock.h for UB
+      run: |
+        sed -i 's/1 << ACTIVE_WRITER_SHIFT/static_cast<int>(1u << ACTIVE_WRITER_SHIFT)/g' llvm-project/libc/src/__support/threads/raw_rwlock.h
+
     - name: Configure LLVM Libc (Cross-Compile for RISC-V)
       run: |
         cmake -S llvm-project/runtimes -B llvm-build -G Ninja \
