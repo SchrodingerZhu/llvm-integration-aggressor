@@ -9,6 +9,7 @@
 #include <linux/futex.h>
 #include <sys/time.h>
 #include <cstdlib>
+#include <cerrno>
 
 #define FUTEX_SYSCALL_ID SYS_futex
 
@@ -46,13 +47,22 @@ public:
         return val.fetch_add(v, order);
     }
 
-    void wait(uint32_t expected) {
+    // Returns 0 on success, negative error code on failure
+    int wait(uint32_t expected, bool use_timeout) {
         for (;;) {
             if (val.load(std::memory_order_relaxed) != expected)
-                return;
-            long ret = futex_wait(&val, FUTEX_WAIT_PRIVATE, expected, NULL);
-            if (ret == 0 || ret == -EAGAIN)
-                return;
+                return 0;
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 10000000; // 10ms
+            long ret = futex_wait(&val, FUTEX_WAIT_PRIVATE, expected, use_timeout ? &ts : NULL);
+            if (ret < 0) {
+                int err = errno;
+                if (err == EINTR)
+                    continue;
+                return -err;
+            }
+            return 0;
         }
     }
     
@@ -86,16 +96,20 @@ class RawMutex {
         }
     }
 
-    void lock_slow(unsigned spin_count) {
+    bool lock_slow(unsigned spin_count, bool use_timeout) {
         uint32_t state = spin(spin_count);
         if (state == UNLOCKED &&
             futex.compare_exchange_strong(state, LOCKED, std::memory_order_acquire, std::memory_order_relaxed))
-            return;
+            return true;
         for (;;) {
             if (state != IN_CONTENTION &&
                 futex.exchange(IN_CONTENTION, std::memory_order_acquire) == UNLOCKED)
-                return;
-            futex.wait(IN_CONTENTION);
+                return true;
+            int wait_ret = futex.wait(IN_CONTENTION, use_timeout);
+            // EAGAIN bug: treat any error (including EAGAIN) as timeout if use_timeout is true
+            if (use_timeout && wait_ret < 0) {
+                return false; // timeout
+            }
             state = spin(spin_count);
         }
     }
@@ -103,11 +117,11 @@ class RawMutex {
 public:
     RawMutex() : futex(UNLOCKED) {}
     
-    void lock() {
+    bool lock(bool use_timeout = false) {
         uint32_t expected = UNLOCKED;
         if (futex.compare_exchange_strong(expected, LOCKED, std::memory_order_acquire, std::memory_order_relaxed))
-            return;
-        lock_slow(100);
+            return true;
+        return lock_slow(100, use_timeout);
     }
     
     void unlock() {
@@ -136,8 +150,8 @@ public:
     };
     
     Guard acquire() { return Guard(*this); }
-    void wait_reader(uint32_t serial) { reader_serialization.wait(serial); }
-    void wait_writer(uint32_t serial) { writer_serialization.wait(serial); }
+    int wait_reader(uint32_t serial, bool use_timeout) { return reader_serialization.wait(serial, use_timeout); }
+    int wait_writer(uint32_t serial, bool use_timeout) { return writer_serialization.wait(serial, use_timeout); }
     void notify_readers() { reader_serialization.wake_all(); }
     void notify_writers() { writer_serialization.wake_one(); }
 };
@@ -161,6 +175,8 @@ public:
     static constexpr int PENDING_READER_BIT = 1 << PENDING_READER_SHIFT;
     static constexpr int PENDING_WRITER_BIT = 1 << PENDING_WRITER_SHIFT;
     static constexpr int ACTIVE_READER_COUNT_UNIT = 1 << ACTIVE_READER_SHIFT;
+    
+    // Using UB version to test
     static constexpr int ACTIVE_WRITER_BIT = 1 << ACTIVE_WRITER_SHIFT;
     static constexpr int PENDING_MASK = PENDING_READER_BIT | PENDING_WRITER_BIT;
 
@@ -247,14 +263,14 @@ public:
         }
     }
 
-    void read_lock() {
+    LockResult read_lock(bool use_timeout = false) {
         int old_raw = state.load(std::memory_order_relaxed);
         for (;;) {
             RwState old(old_raw);
             while (old.can_acquire_reader(preference)) {
                 RwState next = old.increase_reader_count();
                 if (state.compare_exchange_weak(old_raw, next, std::memory_order_acquire, std::memory_order_relaxed))
-                    return;
+                    return LockResult::Success;
                 old = RwState(old_raw);
             }
             uint32_t serial;
@@ -265,8 +281,12 @@ public:
                 old = RwState(old_raw | RwState::PENDING_READER_BIT);
                 serial = guard.reader_serial().load(std::memory_order_relaxed);
             }
+            bool timeout_flag = false;
             if (!old.can_acquire_reader(preference)) {
-                queue.wait_reader(serial);
+                int wait_ret = queue.wait_reader(serial, use_timeout);
+                if (use_timeout && wait_ret < 0) {
+                    timeout_flag = true;
+                }
             }
             {
                 WaitingQueue::Guard guard = queue.acquire();
@@ -275,18 +295,21 @@ public:
                     state.fetch_and(~RwState::PENDING_READER_BIT, std::memory_order_relaxed);
                 }
             }
+            if (timeout_flag) {
+                return LockResult::TimedOut;
+            }
             old_raw = state.load(std::memory_order_relaxed);
         }
     }
 
-    void write_lock() {
+    LockResult write_lock(bool use_timeout = false) {
         int old_raw = state.load(std::memory_order_relaxed);
         for (;;) {
             RwState old(old_raw);
             while (old.can_acquire_writer()) {
                 RwState next = old.set_writer_bit();
                 if (state.compare_exchange_weak(old_raw, next, std::memory_order_acquire, std::memory_order_relaxed))
-                    return;
+                    return LockResult::Success;
                 old = RwState(old_raw);
             }
             uint32_t serial;
@@ -297,8 +320,13 @@ public:
                 old = RwState(old_raw | RwState::PENDING_WRITER_BIT);
                 serial = guard.writer_serial().load(std::memory_order_relaxed);
             }
+            bool timeout_flag = false;
+            bool writer_serial_changed = false;
             if (!old.can_acquire_writer()) {
-                queue.wait_writer(serial);
+                int wait_ret = queue.wait_writer(serial, use_timeout);
+                if (use_timeout && wait_ret < 0) {
+                    timeout_flag = true;
+                }
             }
             {
                 WaitingQueue::Guard guard = queue.acquire();
@@ -306,6 +334,15 @@ public:
                 if (guard.pending_writers() == 0) {
                     state.fetch_and(~RwState::PENDING_WRITER_BIT, std::memory_order_relaxed);
                 }
+                if (use_timeout) {
+                    uint32_t new_serial = guard.writer_serial().load(std::memory_order_relaxed);
+                    writer_serial_changed = new_serial != serial;
+                }
+            }
+            if (timeout_flag) {
+                if (writer_serial_changed)
+                    notify_pending_threads();
+                return LockResult::TimedOut;
             }
             old_raw = state.load(std::memory_order_relaxed);
         }
@@ -348,9 +385,9 @@ class RwLock {
 public:
     RwLock() : raw(1), writer_tid(0) {}
 
-    void read_lock() {
+    LockResult read_lock(bool use_timeout = false) {
         assert(writer_tid.load(std::memory_order_relaxed) != gettid());
-        raw.read_lock();
+        return raw.read_lock(use_timeout);
     }
 
     bool try_read_lock() {
@@ -358,11 +395,13 @@ public:
         return raw.try_read_lock();
     }
 
-    void write_lock() {
+    LockResult write_lock(bool use_timeout = false) {
         pid_t tid = gettid();
         assert(writer_tid.load(std::memory_order_relaxed) != tid);
-        raw.write_lock();
-        writer_tid.store(tid, std::memory_order_relaxed);
+        LockResult result = raw.write_lock(use_timeout);
+        if (result == LockResult::Success)
+            writer_tid.store(tid, std::memory_order_relaxed);
+        return result;
     }
 
     bool try_write_lock() {
@@ -418,23 +457,36 @@ void read_ops() {
 void thread_func(int id) {
     unsigned int seed = id + time(NULL);
     for (int i = 0; i < 10000; ++i) {
-        int op = rand_r(&seed) % 4;
+        int op = rand_r(&seed) % 6; // 6 operations
         if (op == 0) {
-            g_data.lock.read_lock();
-            read_ops();
-            g_data.lock.unlock();
+            if (g_data.lock.read_lock() == LockResult::Success) {
+                read_ops();
+                g_data.lock.unlock();
+            }
         } else if (op == 1) {
-            g_data.lock.write_lock();
-            write_ops();
-            g_data.total_writer_count.fetch_add(1);
-            g_data.lock.unlock();
+            if (g_data.lock.write_lock() == LockResult::Success) {
+                write_ops();
+                g_data.total_writer_count.fetch_add(1);
+                g_data.lock.unlock();
+            }
         } else if (op == 2) {
             if (g_data.lock.try_read_lock()) {
                 read_ops();
                 g_data.lock.unlock();
             }
-        } else {
+        } else if (op == 3) {
             if (g_data.lock.try_write_lock()) {
+                write_ops();
+                g_data.total_writer_count.fetch_add(1);
+                g_data.lock.unlock();
+            }
+        } else if (op == 4) { // timed read
+            if (g_data.lock.read_lock(true) == LockResult::Success) {
+                read_ops();
+                g_data.lock.unlock();
+            }
+        } else { // timed write
+            if (g_data.lock.write_lock(true) == LockResult::Success) {
                 write_ops();
                 g_data.total_writer_count.fetch_add(1);
                 g_data.lock.unlock();
