@@ -3,8 +3,8 @@ name: Continuous Integration
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  # NOTE: pull_request trigger temporarily disabled on this diagnostic branch so
+  # only riscv-memmodel-diag.yml runs on PRs.
   schedule:
     - cron: '0 0 * * *' # Daily at midnight UTC
   workflow_dispatch: # Allow manual trigger
