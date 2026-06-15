@@ -35,10 +35,14 @@ jobs:
         echo "===== confirm we emit the rwlock's exact atomics ====="
         objdump -d litmus | grep -E 'amoadd\.w\.rl|lr\.w\.aq|sc\.w|amoand\.w\.rl' | head -20
 
-    - name: Test 2 - acquire/release litmus
+    - name: Test 2 - acquire/release litmus (thread + cross-process)
       run: |
-        # ~1.3e9 acquire/release handoffs per 20k passes; run several rounds.
+        # ~1.3e9 acquire/release handoffs per 20k passes. Run both modes a few
+        # rounds: 'thread' = generic coherence; 'proc' = MAP_SHARED + fork,
+        # the exact memory type that hung in multiple_process_test.
         for round in 1 2 3; do
-          echo "----- litmus round $round -----"
-          ./litmus 20000
+          echo "===== round $round / thread mode ====="
+          ./litmus thread 20000
+          echo "===== round $round / proc (MAP_SHARED + fork) mode ====="
+          ./litmus proc 20000
         done
