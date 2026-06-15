@@ -1,0 +1,44 @@
+name: RISC-V Memory Model Diagnostic
+
+# Temporary diagnostic for the riscv-only rwlock failures (trap / deadlock).
+# Two checks, both native on the riscv runner, no cross-build / libc / aggressor:
+#   Test 1: identify the silicon (T-Head C9xx == mvendorid 0x5b7?)
+#   Test 2: acquire/release litmus -- does the hardware honor RVWMO .aq/.rl?
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  memmodel-diag:
+    runs-on: ubuntu-24.04-riscv
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Test 1 - silicon identity
+      run: |
+        echo "===== uname -a ====="
+        uname -a
+        echo "===== /proc/cpuinfo ====="
+        cat /proc/cpuinfo
+        echo "===== vendor/arch IDs (mvendorid 0x5b7 == T-Head) ====="
+        grep -E 'uarch|mvendorid|marchid|mimpid|isa' /proc/cpuinfo | sort -u || true
+        echo "===== core count ====="
+        nproc
+
+    - name: Build litmus
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc binutils
+        cc -O2 -pthread -o litmus diag/litmus.c
+        echo "===== confirm we emit the rwlock's exact atomics ====="
+        objdump -d litmus | grep -E 'amoadd\.w\.rl|lr\.w\.aq|sc\.w|amoand\.w\.rl' | head -20
+
+    - name: Test 2 - acquire/release litmus
+      run: |
+        # ~1.3e9 acquire/release handoffs per 20k passes; run several rounds.
+        for round in 1 2 3; do
+          echo "----- litmus round $round -----"
+          ./litmus 20000
+        done
