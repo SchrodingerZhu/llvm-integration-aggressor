@@ -45,6 +45,12 @@ jobs:
         path: llvm-project
         fetch-depth: 1
 
+    - name: Patch LLVM Libc RwLock Memory Order
+      run: |
+        sed -i 's/writer_tid.load(cpp::MemoryOrder::RELAXED)/writer_tid.load(cpp::MemoryOrder::ACQUIRE)/g' llvm-project/libc/src/__support/threads/unix_rwlock.h
+        sed -i 's/writer_tid.store(tid, cpp::MemoryOrder::RELAXED)/writer_tid.store(tid, cpp::MemoryOrder::RELEASE)/g' llvm-project/libc/src/__support/threads/unix_rwlock.h
+
+
     - name: Configure LLVM Libc
       run: |
         cmake -S llvm-project/runtimes -B llvm-build -G Ninja \

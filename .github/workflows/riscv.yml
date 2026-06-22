@@ -47,6 +47,12 @@ jobs:
       run: |
         sed -i 's/LIBC_NAMESPACE::internal::exit(127)/__builtin_trap()/g' llvm-project/libc/test/IntegrationTest/test.h
 
+    - name: Patch LLVM Libc RwLock Memory Order
+      run: |
+        sed -i 's/writer_tid.load(cpp::MemoryOrder::RELAXED)/writer_tid.load(cpp::MemoryOrder::ACQUIRE)/g' llvm-project/libc/src/__support/threads/unix_rwlock.h
+        sed -i 's/writer_tid.store(tid, cpp::MemoryOrder::RELAXED)/writer_tid.store(tid, cpp::MemoryOrder::RELEASE)/g' llvm-project/libc/src/__support/threads/unix_rwlock.h
+
+
     - name: Configure LLVM Libc (Cross-Compile for RISC-V)
       run: |
         cmake -S llvm-project/runtimes -B llvm-build -G Ninja \
