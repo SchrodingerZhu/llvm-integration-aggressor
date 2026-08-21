@@ -65,9 +65,13 @@ jobs:
           -DLLVM_ENABLE_LLD=ON \
           -DCMAKE_CROSSCOMPILING_EMULATOR=qemu-riscv64
 
+    - name: Build LLVM Libc Headers
+      run: |
+        ninja -C llvm-build generate-libc-headers
+
     - name: Build LLVM Libc Integration Tests
       run: |
-        ninja -C llvm-build generate-libc-headers libc-integration-tests
+        ninja -C llvm-build libc-integration-tests
 
     - name: Build Integration Aggressor (Cross-Compile for RISC-V)
       env:
