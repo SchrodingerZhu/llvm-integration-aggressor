@@ -21,6 +21,8 @@ fn find_integration_tests(test_dir: Option<String>) -> Vec<String> {
         let paths = vec![
             PathBuf::from("build/libc/test/integration"),
             PathBuf::from("llvm-project/build/libc/test/integration"),
+            PathBuf::from("../llvm-project/build/libc/test/integration"),
+            PathBuf::from("../llvm-integration-aggressor/build/libc/test/integration"),
         ];
         paths
             .into_iter()
