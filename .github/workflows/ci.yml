@@ -58,7 +58,7 @@ jobs:
 
     - name: Build LLVM Libc Integration Tests
       run: |
-        ninja -C llvm-build libc-integration-tests
+        ninja -C llvm-build generate-libc-headers libc-integration-tests
 
     - name: Build Integration Aggressor
       run: |

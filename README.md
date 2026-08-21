@@ -45,7 +45,7 @@ sudo apt install -y git cmake ninja-build build-essential python3 rustc cargo
 
 3. **Build the integration tests**:
    ```bash
-   ninja -C build libc-integration-tests
+   ninja -C build generate-libc-headers libc-integration-tests
    ```
    This will compile the integration tests. The test binaries (ending in `.__build__`) will be located under `build/libc/test/integration/`.
 
